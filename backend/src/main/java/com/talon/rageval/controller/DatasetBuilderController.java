@@ -32,13 +32,17 @@ public class DatasetBuilderController {
     }
 
     try {
+      // 如果用户没有提供测试用例，使用空列表
+      List<String> userTestCases = request.userTestCases != null ? request.userTestCases : new ArrayList<>();
+      
       List<EvaluationDatasetBuilder.EvaluationData> data =
           datasetBuilder.buildEvaluationDataset(
               request.documents,
               request.targetSize,
               request.baseUrl,
               request.apiKey,
-              request.workspaceId);
+              request.workspaceId,
+              userTestCases);
 
       // 构建响应
       EvaluationDatasetBuilder.DatasetBuildResponse response =
@@ -108,13 +112,17 @@ public class DatasetBuilderController {
     }
 
     try {
+      // 如果用户没有提供测试用例，使用空列表
+      List<String> userTestCases = request.userTestCases != null ? request.userTestCases : new ArrayList<>();
+      
       List<EvaluationDatasetBuilder.EvaluationData> data =
           datasetBuilder.buildEvaluationDataset(
               request.documents,
               request.targetSize,
               request.baseUrl,
               request.apiKey,
-              request.workspaceId);
+              request.workspaceId,
+              userTestCases);
 
       // 计算分页
       int totalCount = data.size();

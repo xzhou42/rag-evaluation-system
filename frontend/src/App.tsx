@@ -247,12 +247,16 @@ function App() {
     setBuildingDataset(true);
     setBuildResult(null);
     try {
+      // 收集用户手动添加的测试用例
+      const userTestCases = cases ? cases.map(c => c.question) : [];
+      
       const res = await api.post<DatasetBuildResponse>('/dataset-builder/build', {
         documents: buildDocuments,
         targetSize: values.targetSize || 100,
         baseUrl: ragEvalConfig.baseUrl,
         apiKey: ragEvalConfig.apiKey,
         workspaceId: ragEvalConfig.workspaceId,
+        userTestCases: userTestCases,  // 传递用户的测试用例
       });
       setBuildResult(res.data);
       message.success(`成功构建 ${res.data.totalCount} 条评测数据`);
@@ -588,7 +592,7 @@ function App() {
       <Sider width={240} theme="light">
         <div style={{ padding: 16, borderBottom: '1px solid #f0f0f0' }}>
           <Title level={4} style={{ marginBottom: 12 }}>
-            测试管理
+            测试集管理
           </Title>
           <Form layout="vertical" form={createDatasetForm} onFinish={handleCreateDataset}>
             <Form.Item name="name" label="新建测试集" rules={[{ required: true, message: '请输入名称' }]}>

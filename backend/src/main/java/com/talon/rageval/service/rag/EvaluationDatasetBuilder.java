@@ -27,7 +27,12 @@ public class EvaluationDatasetBuilder {
    * 构建评测数据集
    */
   public List<EvaluationData> buildEvaluationDataset(
-      List<String> documents, int targetSize, String baseUrl, String apiKey, String workspaceId) {
+      List<String> documents, 
+      int targetSize, 
+      String baseUrl, 
+      String apiKey, 
+      String workspaceId,
+      List<String> userTestCases) {
     List<EvaluationData> evaluationData = new ArrayList<>();
 
     log.info("开始构建评测数据集，目标大小: {}", targetSize);
@@ -37,8 +42,8 @@ public class EvaluationDatasetBuilder {
     Map<String, String> syntheticQueriesMap = generateSyntheticQueriesWithSource(documents, (int) (targetSize * 0.4));
     log.info("生成了 {} 个synthetic queries", syntheticQueriesMap.size());
 
-    // 2. 基于真实用户query的采样 (40%)
-    List<String> realQueries = sampleRealQueries((int) (targetSize * 0.4));
+    // 2. 基于用户手动添加的测试用例采样 (40%)
+    List<String> realQueries = sampleRealQueries(userTestCases, (int) (targetSize * 0.4));
     log.info("采样了 {} 个真实queries", realQueries.size());
 
     // 3. 对抗样本构建 (20%)
@@ -162,23 +167,39 @@ public class EvaluationDatasetBuilder {
 
   /**
    * 采样真实queries
+   * 从用户手动添加的测试用例中采样
    */
-  private List<String> sampleRealQueries(int targetCount) {
-    // 这里可以从数据库或日志中采样真实的用户queries
-    // 暂时返回空列表，实际应用中应该从真实数据源获取
+  private List<String> sampleRealQueries(List<String> userTestCases, int targetCount) {
     List<String> realQueries = new ArrayList<>();
     
-    // 示例数据
-    String[] exampleQueries = {
-        "财务处理的流程是什么？",
-        "如何编制年度预算？",
-        "预算执行需要注意什么？",
-        "财务报表包括哪些内容？",
-        "企业财务管理的目标是什么？",
-    };
+    // 如果用户提供了测试用例，从中采样
+    if (userTestCases != null && !userTestCases.isEmpty()) {
+      // 随机采样
+      for (int i = 0; i < targetCount && i < userTestCases.size(); i++) {
+        realQueries.add(userTestCases.get(i));
+      }
+      
+      // 如果用户提供的用例不足，循环使用
+      while (realQueries.size() < targetCount && !userTestCases.isEmpty()) {
+        int randomIndex = new Random().nextInt(userTestCases.size());
+        realQueries.add(userTestCases.get(randomIndex));
+      }
+      
+      log.info("从用户提供的 {} 个测试用例中采样了 {} 个", userTestCases.size(), realQueries.size());
+    } else {
+      // 如果用户没有提供测试用例，使用示例数据
+      log.warn("用户未提供测试用例，使用示例数据");
+      String[] exampleQueries = {
+          "财务处理的流程是什么？",
+          "如何编制年度预算？",
+          "预算执行需要注意什么？",
+          "财务报表包括哪些内容？",
+          "企业财务管理的目标是什么？",
+      };
 
-    for (int i = 0; i < targetCount && i < exampleQueries.length; i++) {
-      realQueries.add(exampleQueries[i]);
+      for (int i = 0; i < targetCount && i < exampleQueries.length; i++) {
+        realQueries.add(exampleQueries[i]);
+      }
     }
 
     return realQueries;
@@ -307,6 +328,7 @@ public class EvaluationDatasetBuilder {
     public String baseUrl;
     public String apiKey;
     public String workspaceId;
+    public List<String> userTestCases;  // 用户手动添加的测试用例
   }
 
   public static class DatasetBuildResponse {
