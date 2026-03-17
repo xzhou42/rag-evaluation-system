@@ -63,18 +63,36 @@ public class EvaluationDatasetBuilder {
       int targetSize,
       List<String> userTestCases) {
     
-    // 1. 基于文档内容生成synthetic queries (40%)
-    Map<String, String> syntheticQueriesMap = generateSyntheticQueriesWithSource(documents, (int) (targetSize * 0.4));
+    // 1. 基于用户手动添加的测试用例采样 (使用实际提供的数量)
+    // 返回Map<query, groundTruthDocs>来追踪query和groundTruthDocs的对应关系
+    Map<String, List<String>> realQueriesMap = sampleRealQueriesWithGroundTruth(userTestCases, documents, targetSize);
+    int realQueryCount = realQueriesMap.size();
+    log.info("采样了 {} 个真实queries", realQueryCount);
+
+    // 2. 基于文档内容生成synthetic queries (使用剩余的目标大小)
+    int syntheticTargetCount = targetSize - realQueryCount;
+    Map<String, String> syntheticQueriesMap = generateSyntheticQueriesWithSource(documents, syntheticTargetCount);
     log.info("生成了 {} 个synthetic queries", syntheticQueriesMap.size());
 
-    // 2. 基于用户手动添加的测试用例采样 (40%)
-    // 返回Map<query, groundTruthDocs>来追踪query和groundTruthDocs的对应关系
-    Map<String, List<String>> realQueriesMap = sampleRealQueriesWithGroundTruth(userTestCases, documents, (int) (targetSize * 0.4));
-    log.info("采样了 {} 个真实queries", realQueriesMap.size());
-
-    // 3. 对抗样本构建 (20%)
-    List<String> adversarialQueries = generateAdversarialQueries(new ArrayList<>(realQueriesMap.keySet()), (int) (targetSize * 0.2));
+    // 3. 对抗样本构建 (基于real queries生成)
+    List<String> adversarialQueries = generateAdversarialQueries(new ArrayList<>(realQueriesMap.keySet()), 
+        Math.max(1, (int) (realQueryCount * 0.5)));
     log.info("生成了 {} 个对抗样本", adversarialQueries.size());
+
+    // 处理real queries - 使用预先标注的groundTruthDocs
+    for (String query : realQueriesMap.keySet()) {
+      try {
+        EvaluationData data = new EvaluationData();
+        data.query = query;
+        data.groundTruthDocs = realQueriesMap.get(query);  // 使用预先标注的groundTruthDocs
+        data.difficulty = assessDifficulty(query, data.groundTruthDocs);
+        data.category = classifyQueryType(query);
+        data.source = "real";
+        evaluationData.add(data);
+      } catch (Exception e) {
+        log.warn("处理real query失败: {}", query, e);
+      }
+    }
 
     // 处理synthetic queries
     for (String query : syntheticQueriesMap.keySet()) {
@@ -90,21 +108,6 @@ public class EvaluationDatasetBuilder {
         evaluationData.add(data);
       } catch (Exception e) {
         log.warn("处理synthetic query失败: {}", query, e);
-      }
-    }
-
-    // 处理real queries - 使用预先标注的groundTruthDocs
-    for (String query : realQueriesMap.keySet()) {
-      try {
-        EvaluationData data = new EvaluationData();
-        data.query = query;
-        data.groundTruthDocs = realQueriesMap.get(query);  // 使用预先标注的groundTruthDocs
-        data.difficulty = assessDifficulty(query, data.groundTruthDocs);
-        data.category = classifyQueryType(query);
-        data.source = "real";
-        evaluationData.add(data);
-      } catch (Exception e) {
-        log.warn("处理real query失败: {}", query, e);
       }
     }
 
@@ -245,27 +248,14 @@ public class EvaluationDatasetBuilder {
     
     // 从用户提供的测试用例中采样
     if (userTestCases != null && !userTestCases.isEmpty()) {
-      // 随机采样
-      for (int i = 0; i < targetCount && i < userTestCases.size(); i++) {
-        String query = userTestCases.get(i);
+      // 直接使用用户提供的所有测试用例，不做扩展
+      for (String query : userTestCases) {
         // 为每个query标注Ground Truth
         List<String> groundTruthDocs = annotateGroundTruth(query, documents);
         realQueriesMap.put(query, groundTruthDocs);
       }
       
-      // 如果用户提供的用例不足，循环使用
-      while (realQueriesMap.size() < targetCount && !userTestCases.isEmpty()) {
-        int randomIndex = new Random().nextInt(userTestCases.size());
-        String query = userTestCases.get(randomIndex);
-        // 避免重复添加相同的query
-        if (!realQueriesMap.containsKey(query)) {
-          List<String> groundTruthDocs = annotateGroundTruth(query, documents);
-          realQueriesMap.put(query, groundTruthDocs);
-        }
-      }
-      
-      log.info("从用户提供的 {} 个测试用例中采样了 {} 个，并标注了Ground Truth", 
-          userTestCases.size(), realQueriesMap.size());
+      log.info("使用了用户提供的 {} 个测试用例，并标注了Ground Truth", realQueriesMap.size());
     }
 
     return realQueriesMap;
