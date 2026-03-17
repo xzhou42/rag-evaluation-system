@@ -68,11 +68,12 @@ public class EvaluationDatasetBuilder {
     log.info("生成了 {} 个synthetic queries", syntheticQueriesMap.size());
 
     // 2. 基于用户手动添加的测试用例采样 (40%)
-    List<String> realQueries = sampleRealQueries(userTestCases, (int) (targetSize * 0.4));
-    log.info("采样了 {} 个真实queries", realQueries.size());
+    // 返回Map<query, groundTruthDocs>来追踪query和groundTruthDocs的对应关系
+    Map<String, List<String>> realQueriesMap = sampleRealQueriesWithGroundTruth(userTestCases, documents, (int) (targetSize * 0.4));
+    log.info("采样了 {} 个真实queries", realQueriesMap.size());
 
     // 3. 对抗样本构建 (20%)
-    List<String> adversarialQueries = generateAdversarialQueries(realQueries, (int) (targetSize * 0.2));
+    List<String> adversarialQueries = generateAdversarialQueries(new ArrayList<>(realQueriesMap.keySet()), (int) (targetSize * 0.2));
     log.info("生成了 {} 个对抗样本", adversarialQueries.size());
 
     // 处理synthetic queries
@@ -92,12 +93,12 @@ public class EvaluationDatasetBuilder {
       }
     }
 
-    // 处理real queries
-    for (String query : realQueries) {
+    // 处理real queries - 使用预先标注的groundTruthDocs
+    for (String query : realQueriesMap.keySet()) {
       try {
         EvaluationData data = new EvaluationData();
         data.query = query;
-        data.groundTruthDocs = annotateGroundTruth(query, documents);
+        data.groundTruthDocs = realQueriesMap.get(query);  // 使用预先标注的groundTruthDocs
         data.difficulty = assessDifficulty(query, data.groundTruthDocs);
         data.category = classifyQueryType(query);
         data.source = "real";
@@ -171,9 +172,6 @@ public class EvaluationDatasetBuilder {
         log.warn("处理adversarial query失败: {}", query, e);
       }
     }
-
-    log.info("成功构建 {} 条评测数据", evaluationData.size());
-    return evaluationData;
   }
 
   /**
@@ -233,6 +231,44 @@ public class EvaluationDatasetBuilder {
     }
 
     return questions;
+  }
+
+  /**
+   * 采样真实queries并同时标注Ground Truth
+   * 返回Map<query, groundTruthDocs>来追踪query和groundTruthDocs的对应关系
+   */
+  private Map<String, List<String>> sampleRealQueriesWithGroundTruth(
+      List<String> userTestCases, 
+      List<String> documents, 
+      int targetCount) {
+    Map<String, List<String>> realQueriesMap = new LinkedHashMap<>();
+    
+    // 从用户提供的测试用例中采样
+    if (userTestCases != null && !userTestCases.isEmpty()) {
+      // 随机采样
+      for (int i = 0; i < targetCount && i < userTestCases.size(); i++) {
+        String query = userTestCases.get(i);
+        // 为每个query标注Ground Truth
+        List<String> groundTruthDocs = annotateGroundTruth(query, documents);
+        realQueriesMap.put(query, groundTruthDocs);
+      }
+      
+      // 如果用户提供的用例不足，循环使用
+      while (realQueriesMap.size() < targetCount && !userTestCases.isEmpty()) {
+        int randomIndex = new Random().nextInt(userTestCases.size());
+        String query = userTestCases.get(randomIndex);
+        // 避免重复添加相同的query
+        if (!realQueriesMap.containsKey(query)) {
+          List<String> groundTruthDocs = annotateGroundTruth(query, documents);
+          realQueriesMap.put(query, groundTruthDocs);
+        }
+      }
+      
+      log.info("从用户提供的 {} 个测试用例中采样了 {} 个，并标注了Ground Truth", 
+          userTestCases.size(), realQueriesMap.size());
+    }
+
+    return realQueriesMap;
   }
 
   /**
@@ -367,6 +403,17 @@ public class EvaluationDatasetBuilder {
    */
   private String[] extractKeywords(String text) {
     return text.split("[\\s，。！？；：]+");
+  }
+
+  // 内部数据结构：用于追踪query和groundTruthDocs的对应关系
+  private static class QueryWithGroundTruth {
+    String query;
+    List<String> groundTruthDocs;
+    
+    QueryWithGroundTruth(String query, List<String> groundTruthDocs) {
+      this.query = query;
+      this.groundTruthDocs = groundTruthDocs;
+    }
   }
 
   // DTO 类
