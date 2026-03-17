@@ -37,8 +37,33 @@ public class EvaluationDatasetBuilder {
 
     log.info("开始构建评测数据集，目标大小: {}", targetSize);
 
+    // 判断是否有用户提供的测试用例
+    boolean hasUserTestCases = userTestCases != null && !userTestCases.isEmpty();
+    
+    if (hasUserTestCases) {
+      log.info("检测到用户提供的 {} 个测试用例", userTestCases.size());
+      // 有用户用例：Synthetic (40%) + Real (40%) + Adversarial (20%)
+      buildWithUserTestCases(evaluationData, documents, targetSize, userTestCases);
+    } else {
+      log.info("未检测到用户提供的测试用例，仅生成Synthetic和Adversarial queries");
+      // 无用户用例：Synthetic (50%) + Adversarial (50%)
+      buildWithoutUserTestCases(evaluationData, documents, targetSize);
+    }
+
+    log.info("成功构建 {} 条评测数据", evaluationData.size());
+    return evaluationData;
+  }
+
+  /**
+   * 有用户测试用例时的构建逻辑
+   */
+  private void buildWithUserTestCases(
+      List<EvaluationData> evaluationData,
+      List<String> documents,
+      int targetSize,
+      List<String> userTestCases) {
+    
     // 1. 基于文档内容生成synthetic queries (40%)
-    // 返回Map<query, sourceDoc>来追踪query的来源文档
     Map<String, String> syntheticQueriesMap = generateSyntheticQueriesWithSource(documents, (int) (targetSize * 0.4));
     log.info("生成了 {} 个synthetic queries", syntheticQueriesMap.size());
 
@@ -50,20 +75,17 @@ public class EvaluationDatasetBuilder {
     List<String> adversarialQueries = generateAdversarialQueries(realQueries, (int) (targetSize * 0.2));
     log.info("生成了 {} 个对抗样本", adversarialQueries.size());
 
-    // 4. 为每个query标注ground truth和难度
+    // 处理synthetic queries
     for (String query : syntheticQueriesMap.keySet()) {
       try {
         EvaluationData data = new EvaluationData();
         data.query = query;
-        // 对于synthetic queries，使用对应的源文档作为ground truth
         String sourceDoc = syntheticQueriesMap.get(query);
         data.groundTruthDocs = new ArrayList<>();
-        // 使用完整的源文档，不截断
         data.groundTruthDocs.add(sourceDoc);
         data.difficulty = assessDifficulty(query, data.groundTruthDocs);
         data.category = classifyQueryType(query);
         data.source = "synthetic";
-
         evaluationData.add(data);
       } catch (Exception e) {
         log.warn("处理synthetic query失败: {}", query, e);
@@ -79,7 +101,6 @@ public class EvaluationDatasetBuilder {
         data.difficulty = assessDifficulty(query, data.groundTruthDocs);
         data.category = classifyQueryType(query);
         data.source = "real";
-
         evaluationData.add(data);
       } catch (Exception e) {
         log.warn("处理real query失败: {}", query, e);
@@ -95,7 +116,56 @@ public class EvaluationDatasetBuilder {
         data.difficulty = assessDifficulty(query, data.groundTruthDocs);
         data.category = classifyQueryType(query);
         data.source = "adversarial";
+        evaluationData.add(data);
+      } catch (Exception e) {
+        log.warn("处理adversarial query失败: {}", query, e);
+      }
+    }
+  }
 
+  /**
+   * 无用户测试用例时的构建逻辑
+   */
+  private void buildWithoutUserTestCases(
+      List<EvaluationData> evaluationData,
+      List<String> documents,
+      int targetSize) {
+    
+    // 1. 基于文档内容生成synthetic queries (50%)
+    Map<String, String> syntheticQueriesMap = generateSyntheticQueriesWithSource(documents, (int) (targetSize * 0.5));
+    log.info("生成了 {} 个synthetic queries", syntheticQueriesMap.size());
+
+    // 2. 对抗样本构建 (50%)
+    List<String> syntheticQueries = new ArrayList<>(syntheticQueriesMap.keySet());
+    List<String> adversarialQueries = generateAdversarialQueries(syntheticQueries, (int) (targetSize * 0.5));
+    log.info("生成了 {} 个对抗样本", adversarialQueries.size());
+
+    // 处理synthetic queries
+    for (String query : syntheticQueriesMap.keySet()) {
+      try {
+        EvaluationData data = new EvaluationData();
+        data.query = query;
+        String sourceDoc = syntheticQueriesMap.get(query);
+        data.groundTruthDocs = new ArrayList<>();
+        data.groundTruthDocs.add(sourceDoc);
+        data.difficulty = assessDifficulty(query, data.groundTruthDocs);
+        data.category = classifyQueryType(query);
+        data.source = "synthetic";
+        evaluationData.add(data);
+      } catch (Exception e) {
+        log.warn("处理synthetic query失败: {}", query, e);
+      }
+    }
+
+    // 处理adversarial queries
+    for (String query : adversarialQueries) {
+      try {
+        EvaluationData data = new EvaluationData();
+        data.query = query;
+        data.groundTruthDocs = annotateGroundTruth(query, documents);
+        data.difficulty = assessDifficulty(query, data.groundTruthDocs);
+        data.category = classifyQueryType(query);
+        data.source = "adversarial";
         evaluationData.add(data);
       } catch (Exception e) {
         log.warn("处理adversarial query失败: {}", query, e);
@@ -172,7 +242,7 @@ public class EvaluationDatasetBuilder {
   private List<String> sampleRealQueries(List<String> userTestCases, int targetCount) {
     List<String> realQueries = new ArrayList<>();
     
-    // 如果用户提供了测试用例，从中采样
+    // 从用户提供的测试用例中采样
     if (userTestCases != null && !userTestCases.isEmpty()) {
       // 随机采样
       for (int i = 0; i < targetCount && i < userTestCases.size(); i++) {
@@ -186,20 +256,6 @@ public class EvaluationDatasetBuilder {
       }
       
       log.info("从用户提供的 {} 个测试用例中采样了 {} 个", userTestCases.size(), realQueries.size());
-    } else {
-      // 如果用户没有提供测试用例，使用示例数据
-      log.warn("用户未提供测试用例，使用示例数据");
-      String[] exampleQueries = {
-          "财务处理的流程是什么？",
-          "如何编制年度预算？",
-          "预算执行需要注意什么？",
-          "财务报表包括哪些内容？",
-          "企业财务管理的目标是什么？",
-      };
-
-      for (int i = 0; i < targetCount && i < exampleQueries.length; i++) {
-        realQueries.add(exampleQueries[i]);
-      }
     }
 
     return realQueries;
