@@ -1098,7 +1098,7 @@ function App() {
               },
               {
                 key: 'eval',
-                label: '测评与结果',
+                label: '问答相关性测试',
                 children: (
                   <div
                     style={{
@@ -1693,7 +1693,11 @@ function App() {
                             rows={6}
                             placeholder="输入文档内容，每行一个文档..."
                             value={buildDocuments.join('\n')}
-                            onChange={(e) => setBuildDocuments(e.target.value.split('\n').filter(d => d.trim()))}
+                            onChange={(e) => {
+                              // 直接保存所有行，包括空行
+                              const lines = e.target.value.split('\n');
+                              setBuildDocuments(lines);
+                            }}
                           />
                         </Form.Item>
                         <Form.Item

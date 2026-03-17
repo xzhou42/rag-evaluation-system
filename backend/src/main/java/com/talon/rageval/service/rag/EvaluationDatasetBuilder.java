@@ -33,8 +33,9 @@ public class EvaluationDatasetBuilder {
     log.info("开始构建评测数据集，目标大小: {}", targetSize);
 
     // 1. 基于文档内容生成synthetic queries (40%)
-    List<String> syntheticQueries = generateSyntheticQueries(documents, (int) (targetSize * 0.4));
-    log.info("生成了 {} 个synthetic queries", syntheticQueries.size());
+    // 返回Map<query, sourceDoc>来追踪query的来源文档
+    Map<String, String> syntheticQueriesMap = generateSyntheticQueriesWithSource(documents, (int) (targetSize * 0.4));
+    log.info("生成了 {} 个synthetic queries", syntheticQueriesMap.size());
 
     // 2. 基于真实用户query的采样 (40%)
     List<String> realQueries = sampleRealQueries((int) (targetSize * 0.4));
@@ -44,25 +45,54 @@ public class EvaluationDatasetBuilder {
     List<String> adversarialQueries = generateAdversarialQueries(realQueries, (int) (targetSize * 0.2));
     log.info("生成了 {} 个对抗样本", adversarialQueries.size());
 
-    // 合并所有queries
-    List<String> allQueries = new ArrayList<>();
-    allQueries.addAll(syntheticQueries);
-    allQueries.addAll(realQueries);
-    allQueries.addAll(adversarialQueries);
-
     // 4. 为每个query标注ground truth和难度
-    for (String query : allQueries) {
+    for (String query : syntheticQueriesMap.keySet()) {
+      try {
+        EvaluationData data = new EvaluationData();
+        data.query = query;
+        // 对于synthetic queries，使用对应的源文档作为ground truth
+        String sourceDoc = syntheticQueriesMap.get(query);
+        data.groundTruthDocs = new ArrayList<>();
+        data.groundTruthDocs.add(sourceDoc.substring(0, Math.min(100, sourceDoc.length())));
+        data.difficulty = assessDifficulty(query, data.groundTruthDocs);
+        data.category = classifyQueryType(query);
+        data.source = "synthetic";
+
+        evaluationData.add(data);
+      } catch (Exception e) {
+        log.warn("处理synthetic query失败: {}", query, e);
+      }
+    }
+
+    // 处理real queries
+    for (String query : realQueries) {
       try {
         EvaluationData data = new EvaluationData();
         data.query = query;
         data.groundTruthDocs = annotateGroundTruth(query, documents);
         data.difficulty = assessDifficulty(query, data.groundTruthDocs);
         data.category = classifyQueryType(query);
-        data.source = determineSource(query, syntheticQueries, realQueries, adversarialQueries);
+        data.source = "real";
 
         evaluationData.add(data);
       } catch (Exception e) {
-        log.warn("处理query失败: {}", query, e);
+        log.warn("处理real query失败: {}", query, e);
+      }
+    }
+
+    // 处理adversarial queries
+    for (String query : adversarialQueries) {
+      try {
+        EvaluationData data = new EvaluationData();
+        data.query = query;
+        data.groundTruthDocs = annotateGroundTruth(query, documents);
+        data.difficulty = assessDifficulty(query, data.groundTruthDocs);
+        data.category = classifyQueryType(query);
+        data.source = "adversarial";
+
+        evaluationData.add(data);
+      } catch (Exception e) {
+        log.warn("处理adversarial query失败: {}", query, e);
       }
     }
 
@@ -71,11 +101,10 @@ public class EvaluationDatasetBuilder {
   }
 
   /**
-   * 生成synthetic queries
-   * 基于文档内容用LLM生成问题
+   * 生成synthetic queries并返回query与源文档的映射
    */
-  private List<String> generateSyntheticQueries(List<String> documents, int targetCount) {
-    List<String> queries = new ArrayList<>();
+  private Map<String, String> generateSyntheticQueriesWithSource(List<String> documents, int targetCount) {
+    Map<String, String> queriesMap = new LinkedHashMap<>();
     int queriesPerDoc = Math.max(1, targetCount / documents.size());
 
     for (String doc : documents) {
@@ -85,9 +114,16 @@ public class EvaluationDatasetBuilder {
         
         // 生成多个问题
         List<String> questions = generateQuestionsFromDoc(summary, queriesPerDoc);
-        queries.addAll(questions);
+        
+        // 将每个问题与源文档关联
+        for (String question : questions) {
+          queriesMap.put(question, doc);
+          if (queriesMap.size() >= targetCount) {
+            break;
+          }
+        }
 
-        if (queries.size() >= targetCount) {
+        if (queriesMap.size() >= targetCount) {
           break;
         }
       } catch (Exception e) {
@@ -95,7 +131,7 @@ public class EvaluationDatasetBuilder {
       }
     }
 
-    return queries.stream().limit(targetCount).collect(Collectors.toList());
+    return queriesMap;
   }
 
   /**
@@ -179,7 +215,7 @@ public class EvaluationDatasetBuilder {
    * 标注ground truth文档
    */
   private List<String> annotateGroundTruth(String query, List<String> documents) {
-    List<String> groundTruthDocs = new ArrayList<>();
+    Set<String> groundTruthDocsSet = new LinkedHashSet<>();
 
     // 简单的相关性计算：基于关键词重叠
     String[] queryWords = query.toLowerCase().split("\\s+");
@@ -196,10 +232,13 @@ public class EvaluationDatasetBuilder {
 
       // 如果重叠度足够高，标记为ground truth
       if (overlap > 0) {
-        groundTruthDocs.add(doc.substring(0, Math.min(50, doc.length())));
+        String docSnippet = doc.substring(0, Math.min(50, doc.length()));
+        groundTruthDocsSet.add(docSnippet);
       }
     }
 
+    // 转换为List并返回，使用LinkedHashSet自动去重
+    List<String> groundTruthDocs = new ArrayList<>(groundTruthDocsSet);
     return groundTruthDocs.isEmpty() ? documents.subList(0, 1) : groundTruthDocs;
   }
 
@@ -235,20 +274,6 @@ public class EvaluationDatasetBuilder {
     } else {
       return "factual";
     }
-  }
-
-  /**
-   * 确定数据来源
-   */
-  private String determineSource(
-      String query,
-      List<String> synthetic,
-      List<String> real,
-      List<String> adversarial) {
-    if (synthetic.contains(query)) return "synthetic";
-    if (real.contains(query)) return "real";
-    if (adversarial.contains(query)) return "adversarial";
-    return "unknown";
   }
 
   /**
