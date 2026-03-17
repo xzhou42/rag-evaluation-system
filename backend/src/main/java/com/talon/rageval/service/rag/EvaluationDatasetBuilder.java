@@ -53,7 +53,8 @@ public class EvaluationDatasetBuilder {
         // 对于synthetic queries，使用对应的源文档作为ground truth
         String sourceDoc = syntheticQueriesMap.get(query);
         data.groundTruthDocs = new ArrayList<>();
-        data.groundTruthDocs.add(sourceDoc.substring(0, Math.min(100, sourceDoc.length())));
+        // 使用完整的源文档，不截断
+        data.groundTruthDocs.add(sourceDoc);
         data.difficulty = assessDifficulty(query, data.groundTruthDocs);
         data.category = classifyQueryType(query);
         data.source = "synthetic";
@@ -232,8 +233,8 @@ public class EvaluationDatasetBuilder {
 
       // 如果重叠度足够高，标记为ground truth
       if (overlap > 0) {
-        String docSnippet = doc.substring(0, Math.min(50, doc.length()));
-        groundTruthDocsSet.add(docSnippet);
+        // 使用完整的文档，不截断
+        groundTruthDocsSet.add(doc);
       }
     }
 
