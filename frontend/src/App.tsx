@@ -235,6 +235,8 @@ function App() {
   const [buildResult, setBuildResult] = useState<DatasetBuildResponse | null>(null);
   const [buildDocuments, setBuildDocuments] = useState<string[]>([]);
   const [buildTargetSize, setBuildTargetSize] = useState(100);
+  const [buildResultPage, setBuildResultPage] = useState(1);
+  const [buildResultPageSize, setBuildResultPageSize] = useState(10);
 
   const handleBuildDataset = async (values: any) => {
     if (!buildDocuments || buildDocuments.length === 0) {
@@ -1805,8 +1807,19 @@ function App() {
                             <Table
                               rowKey={(_, idx) => idx}
                               size="small"
-                              dataSource={buildResult.data.slice(0, 10)}
-                              pagination={{ pageSize: 5 }}
+                              dataSource={buildResult.data}
+                              pagination={{
+                                current: buildResultPage,
+                                pageSize: buildResultPageSize,
+                                total: buildResult.totalCount,
+                                onChange: (page, pageSize) => {
+                                  setBuildResultPage(page);
+                                  setBuildResultPageSize(pageSize);
+                                },
+                                showSizeChanger: true,
+                                pageSizeOptions: ['10', '20', '50', '100'],
+                                showTotal: (total) => `共 ${total} 条数据`,
+                              }}
                               columns={[
                                 {
                                   title: '问题',

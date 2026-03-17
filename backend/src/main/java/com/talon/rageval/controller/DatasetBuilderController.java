@@ -90,4 +90,73 @@ public class DatasetBuilderController {
 
     return stats;
   }
+
+  /**
+   * 分页查询数据集
+   */
+  @PostMapping("/query")
+  public Map<String, Object> queryDataset(
+      @RequestBody EvaluationDatasetBuilder.DatasetBuildRequest request,
+      @RequestParam(defaultValue = "1") int page,
+      @RequestParam(defaultValue = "10") int pageSize) {
+    if (request.documents == null || request.documents.isEmpty()) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "documents cannot be empty");
+    }
+
+    if (page < 1 || pageSize < 1) {
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "page and pageSize must be positive");
+    }
+
+    try {
+      List<EvaluationDatasetBuilder.EvaluationData> data =
+          datasetBuilder.buildEvaluationDataset(
+              request.documents,
+              request.targetSize,
+              request.baseUrl,
+              request.apiKey,
+              request.workspaceId);
+
+      // 计算分页
+      int totalCount = data.size();
+      int totalPages = (totalCount + pageSize - 1) / pageSize;
+      int startIndex = (page - 1) * pageSize;
+      int endIndex = Math.min(startIndex + pageSize, totalCount);
+
+      // 获取当前页数据
+      List<EvaluationDatasetBuilder.EvaluationData> pageData =
+          data.subList(startIndex, endIndex);
+
+      // 构建响应
+      Map<String, Object> response = new HashMap<>();
+      response.put("data", pageData);
+      response.put("totalCount", totalCount);
+      response.put("totalPages", totalPages);
+      response.put("currentPage", page);
+      response.put("pageSize", pageSize);
+
+      // 计算分布统计
+      Map<String, Integer> difficultyDistribution = new HashMap<>();
+      data.stream()
+          .collect(Collectors.groupingByConcurrent(d -> d.difficulty, Collectors.counting()))
+          .forEach((k, v) -> difficultyDistribution.put(k, v.intValue()));
+      response.put("difficultyDistribution", difficultyDistribution);
+
+      Map<String, Integer> categoryDistribution = new HashMap<>();
+      data.stream()
+          .collect(Collectors.groupingByConcurrent(d -> d.category, Collectors.counting()))
+          .forEach((k, v) -> categoryDistribution.put(k, v.intValue()));
+      response.put("categoryDistribution", categoryDistribution);
+
+      Map<String, Integer> sourceDistribution = new HashMap<>();
+      data.stream()
+          .collect(Collectors.groupingByConcurrent(d -> d.source, Collectors.counting()))
+          .forEach((k, v) -> sourceDistribution.put(k, v.intValue()));
+      response.put("sourceDistribution", sourceDistribution);
+
+      return response;
+    } catch (Exception e) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR, "Failed to query dataset: " + e.getMessage(), e);
+    }
+  }
 }
