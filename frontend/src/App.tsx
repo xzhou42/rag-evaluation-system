@@ -270,6 +270,52 @@ function App() {
     }
   };
 
+  const exportToExcel = (data: any[]) => {
+    if (!data || data.length === 0) {
+      message.warning('没有数据可导出');
+      return;
+    }
+
+    try {
+      // 动态导入xlsx库
+      import('xlsx').then((XLSX) => {
+        // 准备导出数据
+        const exportData = data.map((item, index) => ({
+          '序号': index + 1,
+          '问题': item.query,
+          'Ground Truth文档': item.groundTruthDocs ? item.groundTruthDocs.join('\n---\n') : '',
+          '难度': item.difficulty,
+          '类型': item.category,
+          '来源': item.source,
+        }));
+
+        // 创建工作簿
+        const ws = XLSX.utils.json_to_sheet(exportData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, '评测数据集');
+
+        // 设置列宽
+        ws['!cols'] = [
+          { wch: 8 },   // 序号
+          { wch: 30 },  // 问题
+          { wch: 50 },  // Ground Truth文档
+          { wch: 10 },  // 难度
+          { wch: 12 },  // 类型
+          { wch: 12 },  // 来源
+        ];
+
+        // 导出文件
+        const fileName = `RAG评测数据集_${new Date().getTime()}.xlsx`;
+        XLSX.writeFile(wb, fileName);
+        message.success('导出成功');
+      }).catch(() => {
+        message.error('导出失败，请确保已安装xlsx库');
+      });
+    } catch (error) {
+      message.error('导出失败: ' + (error as any).message);
+    }
+  };
+
   const handleRagEval = async (values: any) => {
     if (!cases || cases.length === 0) {
       message.warning('请先在测试集中添加测试用例');
@@ -1810,7 +1856,15 @@ function App() {
                             </Col>
                           </Row>
 
-                          <Card size="small" title="生成的数据样本" style={{ marginBottom: 16 }}>
+                          <Card size="small" title="生成的数据样本" style={{ marginBottom: 16 }} extra={
+                            <Button 
+                              type="primary" 
+                              size="small"
+                              onClick={() => exportToExcel(buildResult.data)}
+                            >
+                              导出Excel
+                            </Button>
+                          }>
                             <Table
                               rowKey={(_, idx) => idx}
                               size="small"
