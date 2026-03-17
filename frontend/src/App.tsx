@@ -247,8 +247,11 @@ function App() {
     setBuildingDataset(true);
     setBuildResult(null);
     try {
-      // 收集用户手动添加的测试用例
-      const userTestCases = cases ? cases.map(c => c.question) : [];
+      // 收集用户手动添加的测试用例及其参考答案
+      const userTestCases = cases ? cases.map(c => ({
+        question: c.question,
+        referenceAnswer: c.referenceAnswer || ''
+      })) : [];
       
       const res = await api.post<DatasetBuildResponse>('/dataset-builder/build', {
         documents: buildDocuments,
@@ -256,7 +259,7 @@ function App() {
         baseUrl: ragEvalConfig.baseUrl,
         apiKey: ragEvalConfig.apiKey,
         workspaceId: ragEvalConfig.workspaceId,
-        userTestCases: userTestCases,  // 传递用户的测试用例
+        userTestCases: userTestCases,  // 传递用户的测试用例及参考答案
       });
       setBuildResult(res.data);
       message.success(`成功构建 ${res.data.totalCount} 条评测数据`);

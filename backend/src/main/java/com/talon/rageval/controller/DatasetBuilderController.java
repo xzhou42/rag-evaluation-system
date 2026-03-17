@@ -33,7 +33,8 @@ public class DatasetBuilderController {
 
     try {
       // 如果用户没有提供测试用例，使用空列表
-      List<String> userTestCases = request.userTestCases != null ? request.userTestCases : new ArrayList<>();
+      List<EvaluationDatasetBuilder.UserTestCase> userTestCases = 
+          request.userTestCases != null ? request.userTestCases : new ArrayList<>();
       
       List<EvaluationDatasetBuilder.EvaluationData> data =
           datasetBuilder.buildEvaluationDataset(
@@ -113,7 +114,8 @@ public class DatasetBuilderController {
 
     try {
       // 如果用户没有提供测试用例，使用空列表
-      List<String> userTestCases = request.userTestCases != null ? request.userTestCases : new ArrayList<>();
+      List<EvaluationDatasetBuilder.UserTestCase> userTestCases = 
+          request.userTestCases != null ? request.userTestCases : new ArrayList<>();
       
       List<EvaluationDatasetBuilder.EvaluationData> data =
           datasetBuilder.buildEvaluationDataset(

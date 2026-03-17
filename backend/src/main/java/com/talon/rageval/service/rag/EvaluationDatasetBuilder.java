@@ -32,7 +32,7 @@ public class EvaluationDatasetBuilder {
       String baseUrl, 
       String apiKey, 
       String workspaceId,
-      List<String> userTestCases) {
+      List<UserTestCase> userTestCases) {
     List<EvaluationData> evaluationData = new ArrayList<>();
 
     log.info("开始构建评测数据集，目标大小: {}", targetSize);
@@ -42,11 +42,11 @@ public class EvaluationDatasetBuilder {
     
     if (hasUserTestCases) {
       log.info("检测到用户提供的 {} 个测试用例", userTestCases.size());
-      // 有用户用例：Synthetic (40%) + Real (40%) + Adversarial (20%)
+      // 有用户用例：Real + Synthetic + Adversarial
       buildWithUserTestCases(evaluationData, documents, targetSize, userTestCases);
     } else {
       log.info("未检测到用户提供的测试用例，仅生成Synthetic和Adversarial queries");
-      // 无用户用例：Synthetic (50%) + Adversarial (50%)
+      // 无用户用例：Synthetic + Adversarial
       buildWithoutUserTestCases(evaluationData, documents, targetSize);
     }
 
@@ -61,11 +61,11 @@ public class EvaluationDatasetBuilder {
       List<EvaluationData> evaluationData,
       List<String> documents,
       int targetSize,
-      List<String> userTestCases) {
+      List<UserTestCase> userTestCases) {
     
     // 1. 基于用户手动添加的测试用例采样 (使用实际提供的数量)
     // 返回Map<query, groundTruthDocs>来追踪query和groundTruthDocs的对应关系
-    Map<String, List<String>> realQueriesMap = sampleRealQueriesWithGroundTruth(userTestCases, documents, targetSize);
+    Map<String, List<String>> realQueriesMap = sampleRealQueriesWithUserAnswer(userTestCases);
     int realQueryCount = realQueriesMap.size();
     log.info("采样了 {} 个真实queries", realQueryCount);
 
@@ -74,17 +74,19 @@ public class EvaluationDatasetBuilder {
     Map<String, String> syntheticQueriesMap = generateSyntheticQueriesWithSource(documents, syntheticTargetCount);
     log.info("生成了 {} 个synthetic queries", syntheticQueriesMap.size());
 
-    // 3. 对抗样本构建 (基于real queries生成)
-    List<String> adversarialQueries = generateAdversarialQueries(new ArrayList<>(realQueriesMap.keySet()), 
-        Math.max(1, (int) (realQueryCount * 0.5)));
-    log.info("生成了 {} 个对抗样本", adversarialQueries.size());
+    // 3. 对抗样本构建 (基于synthetic queries生成，使用synthetic的Ground Truth)
+    Map<String, List<String>> adversarialQueriesMap = generateAdversarialQueriesWithGroundTruth(
+        new ArrayList<>(syntheticQueriesMap.keySet()), 
+        syntheticQueriesMap,
+        Math.max(1, (int) (syntheticQueriesMap.size() * 0.5)));
+    log.info("生成了 {} 个对抗样本", adversarialQueriesMap.size());
 
-    // 处理real queries - 使用预先标注的groundTruthDocs
+    // 处理real queries - 使用用户提供的参考答案作为Ground Truth
     for (String query : realQueriesMap.keySet()) {
       try {
         EvaluationData data = new EvaluationData();
         data.query = query;
-        data.groundTruthDocs = realQueriesMap.get(query);  // 使用预先标注的groundTruthDocs
+        data.groundTruthDocs = realQueriesMap.get(query);  // 使用用户提供的参考答案
         data.difficulty = assessDifficulty(query, data.groundTruthDocs);
         data.category = classifyQueryType(query);
         data.source = "real";
@@ -111,12 +113,12 @@ public class EvaluationDatasetBuilder {
       }
     }
 
-    // 处理adversarial queries
-    for (String query : adversarialQueries) {
+    // 处理adversarial queries - 使用引用的synthetic query的Ground Truth
+    for (String query : adversarialQueriesMap.keySet()) {
       try {
         EvaluationData data = new EvaluationData();
         data.query = query;
-        data.groundTruthDocs = annotateGroundTruth(query, documents);
+        data.groundTruthDocs = adversarialQueriesMap.get(query);  // 使用synthetic的Ground Truth
         data.difficulty = assessDifficulty(query, data.groundTruthDocs);
         data.category = classifyQueryType(query);
         data.source = "adversarial";
@@ -234,6 +236,71 @@ public class EvaluationDatasetBuilder {
     }
 
     return questions;
+  }
+
+  /**
+   * 采样真实queries并使用用户提供的参考答案作为Ground Truth
+   */
+  private Map<String, List<String>> sampleRealQueriesWithUserAnswer(List<UserTestCase> userTestCases) {
+    Map<String, List<String>> realQueriesMap = new LinkedHashMap<>();
+    
+    // 直接使用用户提供的所有测试用例
+    if (userTestCases != null && !userTestCases.isEmpty()) {
+      for (UserTestCase testCase : userTestCases) {
+        String query = testCase.question;
+        String referenceAnswer = testCase.referenceAnswer;
+        
+        // 使用用户提供的参考答案作为Ground Truth
+        List<String> groundTruthDocs = new ArrayList<>();
+        if (referenceAnswer != null && !referenceAnswer.trim().isEmpty()) {
+          groundTruthDocs.add(referenceAnswer);
+        }
+        
+        realQueriesMap.put(query, groundTruthDocs);
+      }
+      
+      log.info("使用了用户提供的 {} 个测试用例及其参考答案", realQueriesMap.size());
+    }
+
+    return realQueriesMap;
+  }
+
+  /**
+   * 生成对抗样本并使用引用的synthetic query的Ground Truth
+   */
+  private Map<String, List<String>> generateAdversarialQueriesWithGroundTruth(
+      List<String> baseQueries,
+      Map<String, String> syntheticQueriesMap,
+      int targetCount) {
+    Map<String, List<String>> adversarialQueriesMap = new LinkedHashMap<>();
+
+    String[] adversarialPatterns = {
+        "%s的反面是什么？",
+        "与%s相反的概念是什么？",
+        "%s的例外情况有哪些？",
+        "什么情况下%s不适用？",
+    };
+
+    for (String query : baseQueries) {
+      if (adversarialQueriesMap.size() >= targetCount) break;
+
+      String[] words = query.split("\\s+");
+      if (words.length > 0) {
+        String pattern = adversarialPatterns[random.nextInt(adversarialPatterns.length)];
+        String adversarialQuery = String.format(pattern, words[0]);
+        
+        // 使用引用的synthetic query的Ground Truth
+        String sourceDoc = syntheticQueriesMap.get(query);
+        List<String> groundTruthDocs = new ArrayList<>();
+        if (sourceDoc != null) {
+          groundTruthDocs.add(sourceDoc);
+        }
+        
+        adversarialQueriesMap.put(adversarialQuery, groundTruthDocs);
+      }
+    }
+
+    return adversarialQueriesMap;
   }
 
   /**
@@ -421,7 +488,12 @@ public class EvaluationDatasetBuilder {
     public String baseUrl;
     public String apiKey;
     public String workspaceId;
-    public List<String> userTestCases;  // 用户手动添加的测试用例
+    public List<UserTestCase> userTestCases;  // 用户手动添加的测试用例
+  }
+
+  public static class UserTestCase {
+    public String question;
+    public String referenceAnswer;
   }
 
   public static class DatasetBuildResponse {
